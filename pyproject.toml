@@ -1,0 +1,56 @@
+[project]
+name = "ob-learn"
+version = "0.1.0"
+description = "Simulation toolkit and experiment suite for dynamic pricing games with oblivious and informed learners."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.10.9",
+    "numpy>=2.4.4",
+    "pandas>=3.0.2",
+    "pydantic>=2.13.3",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "scipy>=1.17.1",
+    "tabulate>=0.10.0",
+    "tqdm>=4.67.3",
+]
+
+[project.scripts]
+ob-learn = "src.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.20.2",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.12",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N"]
+# Mathematical naming pervades the codebase:
+#   * `l, u` = price bounds; `N` = number of sellers; `S` = seeds; `T` = horizon.
+#   * Test names include "NE", "L_phi", etc., which are model symbols.
+#   * `_common` is imported as `C` in experiments.
+ignore = ["E501", "E741", "N802", "N803", "N806", "N812"]
+
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.13"
+strict = false
+ignore_missing_imports = true
