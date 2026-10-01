@@ -1,0 +1,6 @@
+**All-informed (mean\_price) revenue under two decaying exploration schedules ``\nu_n^2 = c (n+1)^{-\eta}`` with $c = 0.30$ in the revenue duopoly ($\alpha=2.5$, $\beta=-1$, $\gamma=0.6$, $[l,u]=[0.5, 3.5]$). Reference benchmarks: $\Pi^{NE}_0 = 3.189$ and $\Pi^{C}_0 = 3.906$. $T = 60{,}000$, $S = 200$.**
+
+| schedule                     |   eta |   c |   avg_R_T_seller0_mean |   avg_R_T_seller1_mean |   avg_R_T_seller0_p05 |   avg_R_T_seller0_p95 |   avg_R_T_seller1_p05 |   avg_R_T_seller1_p95 |   Pi_NE_seller0 |   Pi_C_seller0 |
+|:-----------------------------|------:|----:|-----------------------:|-----------------------:|----------------------:|----------------------:|----------------------:|----------------------:|----------------:|---------------:|
+| mean_price (eta=0.50, c=0.3) |   0.5 | 0.3 |                  3.186 |                   3.19 |                 3.149 |                 3.226 |                 3.15  |                 3.225 |           3.189 |          3.906 |
+| mean_price (eta=0.70, c=0.3) |   0.7 | 0.3 |                  3.186 |                   3.19 |                 3.122 |                 3.247 |                 3.124 |                 3.259 |           3.189 |          3.906 |

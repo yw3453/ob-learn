@@ -6,19 +6,12 @@ informed (``mean_price`` forecast) and run polynomially decaying exploration
 ``\\nu_n^2 = c (n+1)^{-\\eta}``, the per-period revenue at the horizon should
 converge to ``\\Pi^{NE}`` from below as the exploration tax vanishes.
 
-We sweep three values ``\\eta \\in \\{0.3, 0.5, 0.7\\}`` (with ``c=0.30``
-common to all). The headline cell ``\\eta = 0.5`` puts ``\\nu_n^2`` on the
-order of ``n^{-0.5}``; the bracketing cells stress test slower / faster
-decay.
+We sweep ``\\eta \\in \\{0.5, 0.7\\}`` (with ``c=0.30`` common to both).
 
-Outputs (saved under ``runs/exp_in_in_revenue_decay`` and exported to
-``results/figures/``):
-
-  * ``table_in_in_decay_revenue.{md,csv}`` -- mean and 5/95 % range of
-    average-revenue-per-period at ``T`` for each ``\\eta``.
-  * ``fig_in_in_decay_cumulative_revenue.pdf`` -- cumulative revenue curves
-    against the ``T \\Pi^{NE}`` reference for the headline ``\\eta = 0.5``
-    schedule.
+Outputs: ``table_in_in_decay_revenue.{md,csv}`` (exported to
+``results/tables/``) -- mean and 5/95 % range of average-revenue-per-period
+at ``T`` for each ``\\eta``; the per-run directory additionally holds the
+cumulative revenue curves against the ``T \\Pi^{NE}`` reference.
 """
 
 from __future__ import annotations
@@ -26,12 +19,12 @@ from __future__ import annotations
 import _common as C  # type: ignore[import-not-found]
 import pandas as pd
 
-from src import benchmarks
-from src.artifact_export import export_figure, export_table
-from src.config import ExplorationSchedule, SellerSpec
-from src.logging_utils import run_directory
-from src.plotting import plot_cumulative_revenue
-from src.simulator import run_simulation
+from ob_learn import benchmarks
+from ob_learn.artifact_export import export_table
+from ob_learn.config import ExplorationSchedule, SellerSpec
+from ob_learn.logging_utils import run_directory
+from ob_learn.plotting import plot_cumulative_revenue
+from ob_learn.simulator import run_simulation
 
 
 def make_all_informed(
@@ -58,11 +51,10 @@ def main(
 
     pi_ref = benchmarks.benchmark_per_period_revenues(d)
 
-    # Three decaying schedules; the middle one is the headline n^{-0.5} cell.
-    eta_grid = (0.3, 0.5, 0.7)
+    eta_grid = (0.5, 0.7)
     c_common = 0.30
 
-    rep_sched = ExplorationSchedule(kind="polynomial", c=c_common, eta=eta_grid[1])
+    rep_sched = ExplorationSchedule(kind="polynomial", c=c_common, eta=eta_grid[0])
     cfg = C.base_config(
         name="exp_in_in_revenue_decay",
         market=d,
@@ -80,7 +72,6 @@ def main(
             pi_ref["collusive"].tolist(),
         )
         rows: list[dict] = []
-        cum_fig_export = None
         for eta in eta_grid:
             label = f"inin_mean_price_eta_{eta:.2f}".replace(".", "p")
             sched = ExplorationSchedule(kind="polynomial", c=c_common, eta=float(eta))
@@ -131,33 +122,18 @@ def main(
                 res,
                 title=f"All-informed, mean_price, eta={eta:.2f}",
             )
-            run.save_figure(f"cumulative_revenue_{label}", cum_fig, close=False)
-            if abs(eta - 0.5) < 1e-9:
-                cum_fig_export = cum_fig
-            else:
-                import matplotlib.pyplot as _plt
-
-                _plt.close(cum_fig)
+            run.save_figure(f"cumulative_revenue_{label}", cum_fig)
 
         df = pd.DataFrame(rows)
         run.save_summary("inin_revenue_decaying_summary", df)
         export_table(df, "table_in_in_decay_revenue", caption=(
-            "All-informed (mean\\_price) revenue under three decaying "
+            "All-informed (mean\\_price) revenue under two decaying "
             "exploration schedules ``\\nu_n^2 = c (n+1)^{-\\eta}`` with "
             "$c = 0.30$ in the revenue duopoly ($\\alpha=2.5$, "
             "$\\beta=-1$, $\\gamma=0.6$, $[l,u]=[0.5, 3.5]$). Reference "
             "benchmarks: $\\Pi^{NE}_0 = 3.189$ and $\\Pi^{C}_0 = 3.906$. "
             "$T = 60{,}000$, $S = 200$."
         ))
-        if cum_fig_export is not None:
-            export_figure(
-                cum_fig_export,
-                "fig_in_in_decay_cumulative_revenue",
-                strip_title=True,
-            )
-            import matplotlib.pyplot as _plt
-
-            _plt.close(cum_fig_export)
         run.logger.info("exp_in_in_revenue_decay finished")
 
 

@@ -1,14 +1,14 @@
 """Compile cross-experiment revenue summary tables.
 
-Reads the latest summary CSVs from three composition families
+Reads the latest summary CSVs from the three composition families
 (``exp_ob_ob_revenue``, ``exp_ob_in_revenue``, ``exp_in_in_revenue_decay``)
-plus variance-dominance (``exp_variance_dominance``) and writes:
+and writes:
 
     results/tables/table_rho_nash_relative.{md,csv}
     results/tables/table_surplus_capture.{md,csv}
     results/tables/table_rho_S_numeric.csv
 
-Usage (after the four upstream experiments have produced summary CSVs)::
+Usage (after the three upstream experiments have produced summary CSVs)::
 
     uv run python experiments/build_meta_revenue_summary.py
 """
@@ -66,11 +66,9 @@ def main() -> None:
 
     # --- ob-ob ---------------------------------------------------------------
     df_2a = _read_summary("exp_ob_ob_revenue", "obob_revenue_summary.csv")
-    df_2a = df_2a[df_2a["schedule"] != "low_const_03"].reset_index(drop=True)
     schedule_pretty_2a = {
         "high_const": r"ν²=0.20 (high_const)",
         "low_const": r"ν²=0.05 (low_const)",
-        "low_const_04": r"ν²=0.04 (low_const_04)",
     }
     for _, r in df_2a.iterrows():
         cell = schedule_pretty_2a.get(r["schedule"], r["schedule"])
@@ -106,14 +104,11 @@ def main() -> None:
 
     # --- ob-in ---------------------------------------------------------------
     df_2b = _read_summary("exp_ob_in_revenue", "obin_revenue_summary.csv")
-    rule_label = {
-        "mean_price": "mean_price (condition)",
-        "perfect_prediction": "perfect_prediction (condition)",
-        "greedy_component": "greedy_component (fast decay)",
-        "lag1_autocorr": "lag1_autocorr (fast decay)",
-    }
+    def rule_label(r) -> str:
+        return f"{r['rule']} (η={r['informed_eta']:g})"
+
     for _, r in df_2b.iterrows():
-        cell = rule_label.get(r["rule"], r["rule"])
+        cell = rule_label(r)
         rows_rho.append(dict(
             composition="ob-in",
             cell=cell,
@@ -127,30 +122,12 @@ def main() -> None:
             S_seller1=_fmt_S(r["avg_R_T_seller1_mean"], r["avg_R_T_seller1_p05"], r["avg_R_T_seller1_p95"]),
         ))
 
-    # --- variance dominance --------------------------------------------------
-    df_2e = _read_summary("exp_variance_dominance", "variance_dominance_summary.csv")
-    for _, r in df_2e.iterrows():
-        eta1 = r["eta_1"]
-        cell = f"η₁={eta1:.1f}, η₂=0.0 (c=0.05)"
-        rows_rho.append(dict(
-            composition="varDom",
-            cell=cell,
-            rho_seller0=_fmt_rho(r["rev_1"], r["rev_1_p05"], r["rev_1_p95"]),
-            rho_seller1=_fmt_rho(r["rev_2"], r["rev_2_p05"], r["rev_2_p95"]),
-        ))
-        rows_S.append(dict(
-            composition="varDom",
-            cell=cell,
-            S_seller0=_fmt_S(r["rev_1"], r["rev_1_p05"], r["rev_1_p95"]),
-            S_seller1=_fmt_S(r["rev_2"], r["rev_2_p05"], r["rev_2_p95"]),
-        ))
-
     df_rho = pd.DataFrame(rows_rho)
     df_S = pd.DataFrame(rows_S)
 
     def _numeric_means() -> pd.DataFrame:
         out_rows: list[dict] = []
-        for src_df, kind in ((df_2a, "ob-ob"), (df_2c2, "in-in"), (df_2b, "ob-in"), (df_2e, "varDom")):
+        for src_df, kind in ((df_2a, "ob-ob"), (df_2c2, "in-in"), (df_2b, "ob-in")):
             for _, r in src_df.iterrows():
                 if kind == "ob-ob":
                     rev0 = r["avg_R_T_seller0_mean"]
@@ -160,14 +137,10 @@ def main() -> None:
                     rev0 = r["avg_R_T_seller0_mean"]
                     rev1 = r["avg_R_T_seller1_mean"]
                     cell = f"mean_price (η={r['eta']:.1f}, c={r['c']:.2f})"
-                elif kind == "ob-in":
+                else:  # ob-in
                     rev0 = r["avg_R_T_seller0_mean"]
                     rev1 = r["avg_R_T_seller1_mean"]
-                    cell = rule_label.get(r["rule"], r["rule"])
-                else:  # varDom
-                    rev0 = r["rev_1"]
-                    rev1 = r["rev_2"]
-                    cell = f"η₁={r['eta_1']:.1f}, η₂=0.0 (c=0.05)"
+                    cell = rule_label(r)
                 out_rows.append(dict(
                     composition=kind,
                     cell=cell,
@@ -185,8 +158,7 @@ def main() -> None:
         "the composition grid. All cells use the same revenue duopoly "
         "($\\alpha=2.5$, $\\beta=-1$, $\\gamma=0.6$, $[l,u]=[0.5, 3.5]$), so "
         "$\\Pi_i^{NE}=3.189$. Values are seed means with 5%–95% cross-seed "
-        "ranges in parentheses. In variance-dominance rows (`exp_variance_dominance`), seller 0 "
-        "is dominated and seller 1 dominant when $\\eta_1>0$."
+        "ranges in parentheses."
     )
     S_caption = (
         "**Surplus-capture ratio** $S_i = (R_{T,i}/T - \\Pi_i^{NE})/(\\Pi_i^{C} - \\Pi_i^{NE})$ "

@@ -7,7 +7,7 @@ duopoly used throughout the experiment suite.
 
 from __future__ import annotations
 
-from src.config import (
+from ob_learn.config import (
     DemandParams,
     ExperimentConfig,
     ExplorationSchedule,
@@ -36,7 +36,7 @@ def tight_oblivious_box(d: DemandParams, *, expand: float = 0.5) -> ProjectionBo
     seller's pseudo-true ``(a^*, b^*)`` is contained with ``expand`` relative
     margin on each side (default: ``[0.5, 1.5] * a^*`` and so on).
     """
-    from src import market as m
+    from ob_learn import market as m
 
     p_NE = m.nash_prices(d)
     target = m.pseudo_true_oblivious(d, p_NE)  # (N, 2)
@@ -82,7 +82,7 @@ def tight_informed_box(
         ``[1e-6, gamma_margin * max(gamma)]``.
 
     Callers that pass ``beta_abs_min`` to
-    :func:`src.market.master_theorem_smallgain` should pass
+    :func:`ob_learn.market.master_theorem_smallgain` should pass
     ``beta_abs_min_frac * min(|beta_i|)`` to stay consistent.
     """
     N = d.N
@@ -203,25 +203,6 @@ def quick_overrides(quick: bool, *, default_T: int, default_S: int) -> tuple[int
 # ---------------------------------------------------------------------------
 
 
-def asymmetric_duopoly() -> DemandParams:
-    """Asymmetric duopoly used by the pseudo-equilibria-continuum experiments.
-
-    Sellers differ in vertical demand (``alpha_2 > alpha_1``), price
-    sensitivity (``|beta_2| > |beta_1|``), and competition asymmetry
-    (``gamma_{2,1} > gamma_{1,2}``).
-    """
-    return DemandParams(
-        N=2,
-        alpha=[2.5, 3.0],
-        beta=[-1.0, -1.2],
-        gamma=[[0.0, 0.4], [0.5, 0.0]],
-        l=0.5,
-        u=2.5,
-        noise_kind="uniform",
-        noise_std=0.2,
-    )
-
-
 def symmetric_market(N: int, *, gamma: float = 0.4, noise_std: float = 0.2) -> DemandParams:
     """Symmetric ``N``-seller market with the baseline structural parameters."""
     return DemandParams.symmetric(
@@ -288,6 +269,5 @@ def asymmetric_market(N: int, *, base_seed: int = 0, noise_std: float = 0.2) -> 
         gamma=G.tolist(),
         l=0.5,
         u=2.5,
-        noise_kind="uniform",
         noise_std=noise_std,
     )

@@ -1,28 +1,22 @@
+# Timestamped experiment run directories
+results/20*_exp_*/
+
 # Python-generated files
 __pycache__/
 *.py[oc]
 build/
 dist/
-wheels/
 *.egg-info/
 
 # Virtual environments
 .venv/
 
-# Experiment outputs (large, regeneratable).
-results/
-*.npz
-*.pkl
+# Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # OS / editor
 .DS_Store
 .idea/
 .vscode/
-
-# Coverage / caches
-.coverage
-.coverage.*
-htmlcov/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/

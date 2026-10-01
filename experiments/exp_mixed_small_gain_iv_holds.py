@@ -1,36 +1,11 @@
-"""Mixed-market stress test: denominator condition holds, small-gain fails.
+"""Mixed-market stress test: condition (ii) holds, (iv) fails (log-log regret).
 
-Companion to ``exp_mixed_small_gain.py``: that experiment violates both the
-denominator condition ``bar_c_diag - bar_D > 0`` and the small-gain
-inequality jointly (the box-Lipschitz ``L_phi^{ob}`` alone exceeds 2 under
-the default primitives, driving ``bar_c_diag`` strongly negative). The
-present experiment chooses demand primitives and projection boxes that keep
-both Lipschitz envelopes below 2, so ``bar_c_diag - bar_D > 0`` (the
-denominator condition holds), while the oblivious-side cross-coupling and
-the running-mean spillback inflate the small-gain bracket above ``C_M``, so
-the small-gain inequality still fails.
-
-Symmetric ``N = 5`` mixed market with ``|I^{ob}| = 4`` and ``|I^{in}| = 1``.
-We use ``alpha = 3.0, beta = -2.0, u = 2.0, l = 0.001`` so that ``p^NE
-approx 0.79`` sits well inside the demand box ``[l, u] = [0.001, 2.0]``
-(uniform-dither clip rate is 0 at every ``nu^2 <= 0.20``), a tight
-oblivious projection box (``expand = 0.3``), and a tight *informed*
-projection box that clamps ``|beta_j|`` to ``0.95 |beta|`` from below so
-``L_phi^{in, theta}`` stays moderate and ``bar_c_diag - bar_D`` lifts
-clear of zero. We sweep ``gamma in {0.05, 0.08, 0.10, 0.12}`` (strictly
-inside own-price-dominance threshold ``|beta|/(N-1) = 0.5``) and
-oblivious dithering ``nu^2 in {0.05, 0.10, 0.20}``. Informed seller uses
-the running-mean forecast with ``eta(j) = 0.25``. Horizon ``T = 5e4``,
-``S = 100`` seeds.
-
-For every cell we verify ``K_2 > 0`` (denominator condition holds) and
-``margin < 0`` (small-gain inequality fails), then we plot the seed-averaged
-price MSE on log-log axes; convergence in every cell is the qualitative
-acceptance criterion. Under these primitives every cell has
-``K_2 in [0.73, 0.82]`` (denominator condition holds with comfortable
-margin) and the small-gain margin sits in ``[-2.27, -0.76]`` (small-gain
-inequality fails unambiguously), and a clip-free realized-price dynamics
-yields clean log-log decay without a Jensen-bias plateau.
+Symmetric ``N = 5`` mixed market (``|I^{ob}| = 4``, ``|I^{in}| = 1``) with
+primitives (``alpha=3, beta=-2, u=2``) and a tight informed projection box chosen
+so that the informed-side condition (ii) holds while the oblivious-side (iv) fails.
+Sweep ``gamma`` and ``nu^2``; plot aggregate cumulative *learning* regret on
+log-log axes with a fitted sublinear power reference. Cached + parallel,
+``T = 1e4``.
 """
 
 from __future__ import annotations
@@ -42,215 +17,197 @@ import pandas as pd
 from matplotlib import colormaps as _cmaps
 from matplotlib.lines import Line2D
 
-from src import analysis, market
-from src.artifact_export import export_figure, export_table
-from src.config import (
-    DemandParams,
-    ExplorationSchedule,
+from ob_learn import analysis, benchmarks, figdata, market, parallel
+from ob_learn.artifact_export import export_figure, export_table
+from ob_learn.config import DemandParams, ExplorationSchedule
+from ob_learn.logging_utils import run_directory
+from ob_learn.plotting import (
+    SQUARE_FIGSIZE,
+    loglog_regret_axes,
+    perperiod_reference,
+    regret_reference,
+    report_style,
+    style_regret_axes,
+    truncate_cells,
 )
-from src.logging_utils import run_directory
-from src.plotting import SQUARE_FIGSIZE, report_style, square_box
-from src.simulator import run_simulation
+from ob_learn.simulator import run_simulation
 
+_EXP_ID = "exp_mixed_small_gain_iv_holds"
 _N = 5
 _N_OB = 4
 _N_IN = 1
 _OB_IDX = list(range(_N_OB))
 _IN_IDX = list(range(_N_OB, _N_OB + _N_IN))
 _ETA_INFORMED = 0.25
-_C_INFORMED = 0.10  # nu_n^2 = c (n+1)^{-eta}
-
+_C_INFORMED = 0.10
 _ALPHA = 3.0
 _BETA = -2.0
 _L = 0.001
 _U = 2.0
 _NOISE_STD = 0.2
-
 _GAMMA_GRID = (0.05, 0.08, 0.10, 0.12)
-# All strictly inside diagonal-dominance gamma < |beta|/(N-1) = 0.5.
 _NU2_GRID = (0.05, 0.10, 0.20)
-
 _OB_EXPAND = 0.3
-# Tight informed projection box: clamp |beta_j| within 5% of truth so
-# L_phi^{in,theta} stays moderate at u = 2 (otherwise bar_c_diag goes
-# negative and the denominator condition breaks).
 _BETA_ABS_MIN_FRAC = 0.95
 
 
 def _make_market(gamma: float) -> DemandParams:
     return DemandParams.symmetric(
-        N=_N, alpha=_ALPHA, beta=_BETA, gamma=gamma,
-        l=_L, u=_U, noise_std=_NOISE_STD,
+        N=_N, alpha=_ALPHA, beta=_BETA, gamma=gamma, l=_L, u=_U, noise_std=_NOISE_STD,
     )
+
+
+def _worker(spec: dict) -> dict:
+    gamma = float(spec["gamma"])
+    nu2 = float(spec["nu2"])
+    d = _make_market(gamma)
+    box_ob = C.tight_oblivious_box(d, expand=_OB_EXPAND)
+    box_in = C.tight_informed_box(d, beta_abs_min_frac=_BETA_ABS_MIN_FRAC)
+    beta_abs_min = _BETA_ABS_MIN_FRAC * float(np.min(np.abs(d.beta_arr)))
+    simple = market.simplified_smallgain(d, _OB_IDX, _IN_IDX, box_ob, box_in,
+                                          nu_squared=nu2, beta_abs_min=beta_abs_min)
+    sg = market.master_theorem_smallgain(d, _OB_IDX, _IN_IDX, box_ob, box_in,
+                                         nu_squared=nu2, beta_abs_min=beta_abs_min)
+    cfg = C.base_config(
+        name=f"M1b_gamma{gamma:.2f}_nu2{nu2:.2f}", market=d,
+        sellers=C.make_mixed_sellers(
+            n_ob=_N_OB, n_in=_N_IN,
+            oblivious_schedule=ExplorationSchedule(kind="constant", nu=float(np.sqrt(nu2))),
+            informed_schedule=ExplorationSchedule(kind="polynomial", c=_C_INFORMED, eta=_ETA_INFORMED),
+            forecast_rule="mean_price"),
+        horizon=int(spec["horizon"]), n_seeds=int(spec["n_seeds"]),
+        base_seed=int(spec["base_seed"]), log_every=int(spec["log_every"]),
+        oblivious_box=box_ob, informed_box=box_in,
+    )
+    res = run_simulation(cfg, progress=False, compute_moments=False)
+    n_grid = (res.log_steps + 1).astype(np.float64)
+    reg = benchmarks.cumulative_learning_regret(res, d).sum(axis=1)
+    pp = benchmarks.per_period_learning_regret(res, d).sum(axis=1)
+    reg_mean = reg.mean(axis=1)
+    pp_mean = pp.mean(axis=1)
+    slope = float(analysis.fit_loglog_slope(n_grid, np.maximum(reg_mean, 1e-12))["slope"])
+    pp_slope = float(analysis.fit_loglog_slope(n_grid, np.maximum(pp_mean, 1e-12))["slope"])
+    return {
+        "params": {"gamma": gamma, "nu_squared": nu2,
+                   "learning_regret_final": float(reg_mean[-1]), "regret_slope_tail": slope,
+                   "pp_slope_tail": pp_slope,
+                   "L": float(simple["L"]), "bar_mu": float(simple["bar_mu"]),
+                   "cond_ii_value": float(simple["cond_ii_value"]),
+                   "cond_ii_holds": bool(simple["cond_ii_holds"]),
+                   "cond_iv_holds": bool(simple["cond_iv_holds"]),
+                   "K_2": float(sg["K_2"]), "margin": float(sg["margin"])},
+        "n": n_grid, "regret": reg_mean,
+        "regret_p25": np.percentile(reg, 25, axis=1),
+        "regret_p75": np.percentile(reg, 75, axis=1),
+        "pp": pp_mean,
+        "pp_p25": np.percentile(pp, 25, axis=1),
+        "pp_p75": np.percentile(pp, 75, axis=1),
+    }
+
+
+def _specs(*, horizon, n_seeds, base_seed, log_every) -> list[dict]:
+    return [{"gamma": g, "nu2": nu2, "horizon": horizon, "n_seeds": n_seeds,
+             "base_seed": base_seed, "log_every": log_every}
+            for g in _GAMMA_GRID for nu2 in _NU2_GRID]
+
+
+def _plot(cells: list[dict], *, cumulative: bool = False) -> plt.Figure:
+    with report_style():
+        fig, ax = plt.subplots(figsize=SQUARE_FIGSIZE)
+        cmap = _cmaps.get_cmap("viridis")
+        color_for_gamma = {float(g): cmap(0.10 + 0.80 * idx / max(len(_GAMMA_GRID) - 1, 1))
+                           for idx, g in enumerate(_GAMMA_GRID)}
+        ls_for_nu = {float(nu2): ls for nu2, ls in zip(_NU2_GRID, ("-", "--", ":"), strict=False)}
+        key = "regret" if cumulative else "pp"
+        slope_key = "regret_slope_tail" if cumulative else "pp_slope_tail"
+        for cell in cells:
+            g = float(cell["params"]["gamma"])
+            nu2 = float(cell["params"]["nu_squared"])
+            ax.plot(cell["n"], np.maximum(cell[key], 1e-12),
+                    color=color_for_gamma[g], linestyle=ls_for_nu.get(nu2, "-"),
+                    lw=1.3, alpha=0.90)
+        ref_slope = float(np.nanmedian([float(c["params"][slope_key]) for c in cells]))
+        if cumulative:
+            regret_reference(ax, [(c["n"], c["regret"]) for c in cells], kind="power", slope=ref_slope)
+            style_regret_axes(ax)
+            loc = "upper left"
+        else:
+            perperiod_reference(ax, [(c["n"], c["pp"]) for c in cells], slope=ref_slope)
+            loglog_regret_axes(ax, ylabel=r"per-period learning regret")
+            loc = "lower left"
+        handles_g = [Line2D([0], [0], color=color_for_gamma[float(g)], lw=1.6,
+                            label=fr"$\gamma = {g:.2f}$") for g in _GAMMA_GRID]
+        handles_nu = [Line2D([0], [0], color="black", lw=1.4, linestyle=ls_for_nu[float(nu2)],
+                             label=fr"$\nu^2 = {nu2:.2f}$") for nu2 in _NU2_GRID]
+        ref_handle = [Line2D([0], [0], color="0.30", lw=1.1, linestyle=(0, (4, 3)),
+                             label=fr"$\propto n^{{{ref_slope:.2f}}}$")]
+        ax.legend(handles=handles_g + handles_nu + ref_handle, loc=loc,
+                  fontsize=10, framealpha=0.92, ncol=2)
+        fig.tight_layout()
+    return fig
 
 
 def main(
     *,
-    horizon: int = 50_000,
+    horizon: int = 10_000,
     n_seeds: int = 100,
     base_seed: int = 67,
     quick: bool = False,
+    replot: bool = False,
+    overwrite: bool = False,
+    cumulative: bool = False,
+    plot_max_n: float | None = None,
+    max_workers: int = parallel.DEFAULT_WORKERS,
 ) -> None:
     horizon, n_seeds = C.quick_overrides(quick, default_T=horizon, default_S=n_seeds)
+    log_every = max(1, horizon // 1000)
 
     rep_d = _make_market(_GAMMA_GRID[0])
-    rep_box_ob = C.tight_oblivious_box(rep_d, expand=_OB_EXPAND)
-    rep_box_in = C.tight_informed_box(rep_d, beta_abs_min_frac=_BETA_ABS_MIN_FRAC)
-    rep_sched_ob = ExplorationSchedule(kind="constant", nu=float(np.sqrt(_NU2_GRID[0])))
-    rep_sched_in = ExplorationSchedule(kind="polynomial", c=_C_INFORMED, eta=_ETA_INFORMED)
-
     cfg = C.base_config(
-        name="exp_mixed_small_gain_iv_holds",
-        market=rep_d,
+        name=_EXP_ID, market=rep_d,
         sellers=C.make_mixed_sellers(
             n_ob=_N_OB, n_in=_N_IN,
-            oblivious_schedule=rep_sched_ob,
-            informed_schedule=rep_sched_in,
-            forecast_rule="mean_price",
-        ),
-        horizon=horizon,
-        n_seeds=n_seeds,
-        base_seed=base_seed,
-        log_every=max(1, horizon // 1000),
-        oblivious_box=rep_box_ob,
-        informed_box=rep_box_in,
+            oblivious_schedule=ExplorationSchedule(kind="constant", nu=float(np.sqrt(_NU2_GRID[0]))),
+            informed_schedule=ExplorationSchedule(kind="polynomial", c=_C_INFORMED, eta=_ETA_INFORMED),
+            forecast_rule="mean_price"),
+        horizon=horizon, n_seeds=n_seeds, base_seed=base_seed, log_every=log_every,
+        oblivious_box=C.tight_oblivious_box(rep_d, expand=_OB_EXPAND),
+        informed_box=C.tight_informed_box(rep_d, beta_abs_min_frac=_BETA_ABS_MIN_FRAC),
     )
 
-    with run_directory("exp_mixed_small_gain_iv_holds", cfg) as run:
-        run.logger.info(
-            "N=%d, n_ob=%d, n_in=%d, alpha=%.2f, beta=%.2f, u=%.2f, l=%.3f, "
-            "gamma_grid=%s, nu2_grid=%s, eta_informed=%.2f, ob_expand=%.2f, "
-            "beta_abs_min_frac=%.2f",
-            _N, _N_OB, _N_IN, _ALPHA, _BETA, _U, _L,
-            list(_GAMMA_GRID), list(_NU2_GRID), _ETA_INFORMED, _OB_EXPAND,
-            _BETA_ABS_MIN_FRAC,
-        )
+    with run_directory(_EXP_ID, cfg) as run:
+        if replot and figdata.figdata_exists(_EXP_ID) and not overwrite:
+            run.logger.info("replot: loading cached figdata for %s", _EXP_ID)
+            cells = figdata.load_figdata(_EXP_ID)
+        else:
+            run.logger.info("N=%d ob=%d in=%d gamma=%s nu2=%s T=%d S=%d (workers=%d)",
+                            _N, _N_OB, _N_IN, list(_GAMMA_GRID), list(_NU2_GRID),
+                            horizon, n_seeds, max_workers)
+            specs = _specs(horizon=horizon, n_seeds=n_seeds, base_seed=base_seed, log_every=log_every)
+            cells = parallel.map_cells(_worker, specs, max_workers=max_workers, logger=run.logger)
+            figdata.save_figdata(_EXP_ID, cells)
 
-        rows: list[dict] = []
-        curves: list[tuple[float, float, np.ndarray, np.ndarray]] = []
-
-        for gamma in _GAMMA_GRID:
-            d = _make_market(gamma)
-            box_ob = C.tight_oblivious_box(d, expand=_OB_EXPAND)
-            box_in = C.tight_informed_box(d, beta_abs_min_frac=_BETA_ABS_MIN_FRAC)
-            p_NE = market.nash_prices(d)
-            run.logger.info(
-                "gamma=%.3f, p_NE=%s", gamma, np.round(p_NE, 3).tolist()
-            )
-            beta_abs_min = _BETA_ABS_MIN_FRAC * float(np.min(np.abs(d.beta_arr)))
-            for nu2 in _NU2_GRID:
-                sched_ob = ExplorationSchedule(kind="constant", nu=float(np.sqrt(nu2)))
-                sched_in = ExplorationSchedule(
-                    kind="polynomial", c=_C_INFORMED, eta=_ETA_INFORMED
-                )
-                smallgain = market.master_theorem_smallgain(
-                    d, _OB_IDX, _IN_IDX, box_ob, box_in,
-                    nu_squared=nu2, beta_abs_min=beta_abs_min,
-                )
-                sub_cfg = C.base_config(
-                    name=f"M1b_gamma{gamma:.2f}_nu2{nu2:.2f}",
-                    market=d,
-                    sellers=C.make_mixed_sellers(
-                        n_ob=_N_OB, n_in=_N_IN,
-                        oblivious_schedule=sched_ob,
-                        informed_schedule=sched_in,
-                        forecast_rule="mean_price",
-                    ),
-                    horizon=horizon,
-                    n_seeds=n_seeds,
-                    base_seed=base_seed,
-                    log_every=cfg.log_every,
-                    oblivious_box=box_ob,
-                    informed_box=box_in,
-                )
-                run.logger.info(
-                    "running gamma=%.3f nu^2=%.3f: K_2=%+.4f, margin=%+.4f, "
-                    "iv_holds=%s, ii_fails=%s",
-                    gamma, nu2, smallgain["K_2"], smallgain["margin"],
-                    smallgain["K_2"] > 0, smallgain["margin"] < 0,
-                )
-                res = run_simulation(sub_cfg, logger=run.logger)
-                mse_p = analysis.mse_price(res)
-                mse_curve = mse_p.mean(axis=1)
-                n_grid = res.log_steps + 1
-                curves.append((
-                    float(gamma), float(nu2),
-                    n_grid.astype(np.float64), mse_curve,
-                ))
-                row = {
-                    "gamma": float(gamma),
-                    "mse_price_final": float(mse_curve[-1]),
-                    **smallgain,
-                }
-                rows.append(row)
-                run.log_event("M1b_cell", **row)
-
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame([dict(c["params"]) for c in cells])
         run.save_summary("M1b_iv_holds_cells", df)
         export_table(
             df, "table_mixed_small_gain_iv_holds_iv_holds",
             caption=(
-                "Mixed-market stress test where the denominator condition "
-                "holds but the small-gain inequality fails. Symmetric $N=5$ "
-                "market with $|\\mathcal I^{ob}|=4, |\\mathcal I^{in}|=1$, "
-                f"$\\alpha={_ALPHA}, \\beta={_BETA}, u={_U}$, with a tight "
-                "informed projection box clamping $|\\beta_j| \\geq "
-                f"{_BETA_ABS_MIN_FRAC}|\\beta|$. For each $(\\gamma, \\nu^2)$ "
-                "cell we report $K_2 = \\bar c_{\\mathrm{diag}} - \\bar D > 0$ "
-                "(denominator condition holds), the small-gain margin "
-                "$C_M - C_x[2\\bar\\gamma^{ob}L_\\phi^{ob} + \\bar\\Delta + "
-                "\\bar\\Theta + L_\\phi^{ob}\\bar\\Psi/(\\bar c_{\\mathrm{diag}} - "
-                "\\bar D)] < 0$ (small-gain inequality fails), and the "
-                "seed-averaged final price MSE."
+                "Mixed-market stress test where the informed-side condition (ii) "
+                "holds but the oblivious-side condition (iv) fails. Symmetric "
+                "$N=5$ market with $|\\mathcal I^{ob}|=4, |\\mathcal I^{in}|=1$, "
+                f"$\\alpha={_ALPHA}, \\beta={_BETA}, u={_U}$. Each cell reports "
+                "$L + 2\\bar\\mu < 2$ (condition (ii) holds), condition (iv) "
+                "(fails), the primitive $K_2$/margin, and the final cumulative "
+                "learning regret (sublinear throughout)."
             ),
             floatfmt=".3g",
         )
 
-        if curves:
-            with report_style():
-                fig, ax = plt.subplots(figsize=SQUARE_FIGSIZE)
-                cmap = _cmaps.get_cmap("viridis")
-                color_for_gamma = {
-                    float(g): cmap(0.10 + 0.80 * idx / max(len(_GAMMA_GRID) - 1, 1))
-                    for idx, g in enumerate(_GAMMA_GRID)
-                }
-                ls_for_nu = {
-                    float(nu2): ls
-                    for nu2, ls in zip(_NU2_GRID, ("-", "--", ":"), strict=False)
-                }
-                for gamma_v, nu2_v, n_axis, curve in curves:
-                    ax.plot(
-                        n_axis, np.maximum(curve, 1e-12),
-                        color=color_for_gamma[float(gamma_v)],
-                        linestyle=ls_for_nu.get(float(nu2_v), "-"),
-                        lw=1.3, alpha=0.90,
-                    )
-                ax.set_xscale("log")
-                ax.set_yscale("log")
-                ax.set_xlabel(r"$n$")
-                ax.set_ylabel(r"MSE($\tilde p_n$)")
-                handles_g = [
-                    Line2D([0], [0],
-                           color=color_for_gamma[float(g)], lw=1.6,
-                           label=fr"$\gamma = {g:.2f}$")
-                    for g in _GAMMA_GRID
-                ]
-                handles_nu = [
-                    Line2D([0], [0], color="black", lw=1.4,
-                           linestyle=ls_for_nu[float(nu2)],
-                           label=fr"$\nu^2 = {nu2:.2f}$")
-                    for nu2 in _NU2_GRID
-                ]
-                ax.legend(
-                    handles=handles_g + handles_nu, loc="lower left",
-                    fontsize=10, framealpha=0.92, ncol=2,
-                )
-                square_box(ax)
-                fig.tight_layout()
-            run.save_figure("M1b_mse_paths", fig, close=False)
-            export_figure(fig, "fig_mixed_small_gain_iv_holds_iv_holds_mse_paths", strip_title=True)
-
-        run.logger.info("exp_mixed_small_gain_iv_holds finished")
+        suffix = "_cumulative" if cumulative else ""
+        fig = _plot(truncate_cells(cells, plot_max_n), cumulative=cumulative)
+        run.save_figure(f"M1b_regret_paths{suffix}", fig, close=False)
+        export_figure(fig, f"fig_M1b_iv_holds_regret_paths{suffix}", strip_title=True)
+        run.logger.info("%s finished", _EXP_ID)
 
 
 if __name__ == "__main__":

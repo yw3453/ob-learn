@@ -2,7 +2,7 @@
 
 In the symmetric all-oblivious duopoly, plot ``R_{T,i} = sum_t p_{t,i} d_{t,i}``
 against ``T * Pi_{NE}`` and ``T * Pi_C``, both under the Fast regime (where
-``mse_price`` decays as ``1/n``) and under a sublinear/decaying-exploration
+the price MSE decays as ``1/n``) and under a sublinear/decaying-exploration
 regime where short-run excursions are visible. Feeds the ob-ob row of the
 meta-revenue summary via ``experiments/build_meta_revenue_summary.py``.
 """
@@ -13,12 +13,12 @@ import _common as C  # type: ignore[import-not-found]
 import numpy as np
 import pandas as pd
 
-from src import benchmarks
-from src.artifact_export import export_figure, export_table
-from src.config import ExplorationSchedule
-from src.logging_utils import run_directory
-from src.plotting import plot_cumulative_revenue, plot_sample_paths
-from src.simulator import run_simulation
+from ob_learn import benchmarks
+from ob_learn.artifact_export import export_table
+from ob_learn.config import ExplorationSchedule
+from ob_learn.logging_utils import run_directory
+from ob_learn.plotting import plot_cumulative_revenue, plot_sample_paths
+from ob_learn.simulator import run_simulation
 
 
 def main(
@@ -32,27 +32,12 @@ def main(
     d = C.revenue_duopoly()  # larger gamma => more visible revenue gap.
     box_ob = C.tight_oblivious_box(d, expand=0.5)
 
-    # Three persistent-exploration schedules contrast revenue regimes.
-    # All are *constant* and *persistent*; in the convergent (fast) regime
-    # prices settle near ``p^{NE}`` with revenue
+    # Two constant (persistent) exploration schedules. In the convergent (fast)
+    # regime prices settle near ``p^{NE}`` with revenue
     # ``\approx \Pi^{NE} - |\beta_i| \nu^2``.
-    #
-    # ``low_const_04`` (``\nu^2 = 0.04``) is the smallest convergent cell
-    # we report -- it sits just above the revenue duopoly's empirical
-    # fast-regime threshold (a touch above ``\nu^2 = 0.03`` per spot
-    # checks), so prices converge to ``p^{NE}`` and revenue lands at
-    # the textbook ``\Pi^{NE} - |\beta| \nu^2``. Horizon is bumped to
-    # ``T = 120{,}000`` for that cell so the running mean settles well
-    # within the noise band.
     schedules = {
-        "high_const":   ExplorationSchedule(kind="constant", nu=float(np.sqrt(0.20))),
-        "low_const":    ExplorationSchedule(kind="constant", nu=float(np.sqrt(0.05))),
-        "low_const_04": ExplorationSchedule(kind="constant", nu=float(np.sqrt(0.04))),
-    }
-    horizon_per_label = {
-        "high_const":   horizon,
-        "low_const":    horizon,
-        "low_const_04": max(horizon, 120_000),
+        "high_const": ExplorationSchedule(kind="constant", nu=float(np.sqrt(0.20))),
+        "low_const":  ExplorationSchedule(kind="constant", nu=float(np.sqrt(0.05))),
     }
 
     rep_sched = next(iter(schedules.values()))
@@ -75,15 +60,14 @@ def main(
 
         rows = []
         for label, sched in schedules.items():
-            T_label = horizon_per_label.get(label, horizon)
             sub_cfg = C.base_config(
                 name=f"obob_{label}",
                 market=d,
                 sellers=C.make_oblivious_sellers(d.N, sched),
-                horizon=T_label,
+                horizon=horizon,
                 n_seeds=n_seeds,
                 base_seed=base_seed,
-                log_every=max(1, T_label // 1000),
+                log_every=max(1, horizon // 1000),
                 oblivious_box=box_ob,
             )
             run.logger.info("running ob-ob revenue under %s", label)
@@ -118,29 +102,17 @@ def main(
                 )
             )
             cum_fig = plot_cumulative_revenue(res, title=f"All-oblivious, {label}")
-            run.save_figure(f"cumulative_revenue_{label}", cum_fig, close=False)
+            run.save_figure(f"cumulative_revenue_{label}", cum_fig)
             sp_fig = plot_sample_paths(res, n_paths=5, title=f"All-oblivious, {label}")
-            run.save_figure(f"sample_paths_{label}", sp_fig, close=False)
-            if label == "high_const":
-                # Export the high-exploration case: shows revenue
-                # systematically below NE due to the explicit dithering cost.
-                export_figure(cum_fig, "fig_ob_ob_cumulative_revenue_high_const", strip_title=True)
-                export_figure(sp_fig, "fig_ob_ob_sample_paths_high_const", strip_title=True)
-            else:
-                import matplotlib.pyplot as _plt
-
-                _plt.close(cum_fig)
-                _plt.close(sp_fig)
+            run.save_figure(f"sample_paths_{label}", sp_fig)
 
         df = pd.DataFrame(rows)
         run.save_summary("obob_revenue_summary", df)
         export_table(df, "table_ob_ob_revenue", caption=(
-            "All-oblivious revenue under three exploration schedules in the "
+            "All-oblivious revenue under two exploration schedules in the "
             "revenue duopoly ($\\alpha=2.5$, $\\beta=-1$, $\\gamma=0.6$, "
             "$[l,u]=[0.5, 3.5]$). Reference benchmarks: $\\Pi^{NE}_0 = 3.189$ "
-            "and $\\Pi^{C}_0 = 3.906$. Horizons: $T=60{,}000$ for "
-            "`high_const` and `low_const`; $T=120{,}000$ for `low_const_04`. "
-            "$S=200$ in all cells."
+            "and $\\Pi^{C}_0 = 3.906$. $T=60{,}000$, $S=200$."
         ))
         run.logger.info("exp_ob_ob_revenue finished")
 

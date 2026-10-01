@@ -9,8 +9,7 @@ All cells share the persistent oblivious exploration regime
 ``perfect_prediction`` forecasts. The informed seller decays as
 ``nu_n^2 = 0.10 (n+1)^{-eta}``; we evaluate two decay rates
 ``eta in {0.5, 0.25}``, both strictly inside the admissible range
-``eta in [0, 1]``. The ``lag1_autocorr`` cell (eta = 0.5) is kept as an
-ablation that documents the Jensen cost of failing to de-noise.
+``eta in [0, 1]``.
 """
 
 from __future__ import annotations
@@ -19,12 +18,12 @@ import _common as C  # type: ignore[import-not-found]
 import numpy as np
 import pandas as pd
 
-from src import benchmarks, market
-from src.artifact_export import export_figure, export_table
-from src.config import ExperimentConfig, ExplorationSchedule, InformedProjectionBox
-from src.logging_utils import run_directory
-from src.plotting import plot_cumulative_revenue
-from src.simulator import run_simulation
+from ob_learn import benchmarks, market
+from ob_learn.artifact_export import export_table
+from ob_learn.config import ExperimentConfig, ExplorationSchedule, InformedProjectionBox
+from ob_learn.logging_utils import run_directory
+from ob_learn.plotting import plot_cumulative_revenue
+from ob_learn.simulator import run_simulation
 
 _THEOREM_OB = ExplorationSchedule(kind="constant", nu=float(np.sqrt(0.10)))
 _THEOREM_IN_ETA05 = ExplorationSchedule(kind="polynomial", c=0.10, eta=0.5)
@@ -36,7 +35,6 @@ _CELLS: tuple[tuple[str, str, ExplorationSchedule], ...] = (
     ("mean_price_eta05", "mean_price", _THEOREM_IN_ETA05),
     ("mean_price_eta025", "mean_price", _THEOREM_IN_ETA025),
     ("perfect_prediction", "perfect_prediction", _THEOREM_IN_ETA05),
-    ("lag1_autocorr", "lag1_autocorr", _THEOREM_IN_ETA05),
 )
 
 
@@ -147,15 +145,7 @@ def main(
                 )
             )
             cum_fig = plot_cumulative_revenue(res, title=f"Mixed ob-in, cell={cell_name}")
-            run.save_figure(f"cumulative_revenue_{cell_name}", cum_fig, close=False)
-            # Export the perfect_prediction case (Stackelberg) and the canonical
-            # eta = 0.5 mean_price baseline.
-            if cell_name in ("perfect_prediction", "mean_price_eta05"):
-                export_figure(cum_fig, f"fig_ob_in_cumrev_{cell_name}", strip_title=True)
-            else:
-                import matplotlib.pyplot as _plt
-
-                _plt.close(cum_fig)
+            run.save_figure(f"cumulative_revenue_{cell_name}", cum_fig)
 
         df = pd.DataFrame(rows)
         run.save_summary("obin_revenue_summary", df)

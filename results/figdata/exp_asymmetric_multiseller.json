@@ -1,0 +1,60 @@
+{
+  "exp_id": "exp_asymmetric_multiseller",
+  "n_cells": 9,
+  "params": [
+    {
+      "N": 3,
+      "nu2": 0.05,
+      "learning_regret_final": 13.587227008511213,
+      "pp_slope_tail": -1.1773981037854229
+    },
+    {
+      "N": 3,
+      "nu2": 0.1,
+      "learning_regret_final": 8.42942494811037,
+      "pp_slope_tail": -1.186449852780612
+    },
+    {
+      "N": 3,
+      "nu2": 0.2,
+      "learning_regret_final": 6.076126456943742,
+      "pp_slope_tail": -1.018186602191391
+    },
+    {
+      "N": 5,
+      "nu2": 0.05,
+      "learning_regret_final": 30.25412356881065,
+      "pp_slope_tail": -1.0246289010876708
+    },
+    {
+      "N": 5,
+      "nu2": 0.1,
+      "learning_regret_final": 17.379281219858537,
+      "pp_slope_tail": -1.032974591112151
+    },
+    {
+      "N": 5,
+      "nu2": 0.2,
+      "learning_regret_final": 11.940195735676992,
+      "pp_slope_tail": -0.7639061705199836
+    },
+    {
+      "N": 10,
+      "nu2": 0.05,
+      "learning_regret_final": 27.92569113265864,
+      "pp_slope_tail": -1.0005805315537522
+    },
+    {
+      "N": 10,
+      "nu2": 0.1,
+      "learning_regret_final": 16.97748234311105,
+      "pp_slope_tail": -1.0276627688150486
+    },
+    {
+      "N": 10,
+      "nu2": 0.2,
+      "learning_regret_final": 10.651095922383307,
+      "pp_slope_tail": -1.0622600437191743
+    }
+  ]
+}

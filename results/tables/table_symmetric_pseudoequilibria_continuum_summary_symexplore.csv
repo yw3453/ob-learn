@@ -1,0 +1,9 @@
+statistic,value
+num empirical points,1800.0
+std($\bar p_1$),0.21211144579666494
+std($\bar p_2$),0.21273883088967302
+mean orthogonal distance from $p^{NE}$--$p^{C}$ segment,0.03601122865554725
+95\%-ile orthogonal distance from $p^{NE}$--$p^{C}$ segment,0.1068966637981267
+fraction with either-seller revenue $<\Pi^{NE}$,0.18777777777777777
+fraction with both-seller revenue $<\Pi^{NE}$,0.07222222222222222
+min Euclidean distance to $p^{C}$,0.005824197960748337

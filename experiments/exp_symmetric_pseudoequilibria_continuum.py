@@ -1,55 +1,238 @@
 """Continuum of pseudo-equilibria in the *symmetric* duopoly.
 
-Companion to ``exp_asymmetric_pseudoequilibria_continuum``. The asymmetric run produces an
-empirical cloud that sits along the ``p_1 = p_2`` ridge but the joint-profit
-collusive marker ``p^C`` is *off* that ridge (because ``|\\beta_2| > |\\beta_1|``
-makes seller 2's collusive price strictly lower than seller 1's). To check
-that this geometry is a real consequence of the asymmetric joint profit
-maximisation and not an artifact of the dynamics, we re-run the same
-experiment on the symmetric baseline duopoly (``alpha = 2.5``, ``beta = -1``,
-``gamma = 0.4``) and verify that:
+Produces the paper's pseudo-equilibria-continuum figure via
+:func:`run_comparison` (``ob-learn run pseudoequilibria-continuum``, or
+``--comparison`` when run as a script). Under decaying exploration the set of
+reachable pseudo-equilibria forms a *continuum* parameterised by the
+regression ratios ``(r_1, r_2)``; we compute the theoretical reachable region
+in price and revenue space and overlay the empirical long-run prices from
+discrete-time runs started from a diverse spread of warm-up prices.
+
+For the symmetric baseline duopoly (``alpha = 2.5``, ``beta = -1``,
+``gamma = 0.4``):
 
 * the theoretical continuum of pseudo-equilibria is symmetric around the diagonal,
-* the empirical cloud sits on the ``p_1 = p_2`` diagonal as before,
+* the empirical cloud sits on the ``p_1 = p_2`` diagonal,
 * the collusive marker ``p^C = (2.083, 2.083)`` is *on* that diagonal and
   is therefore approximately surrounded by the empirical points.
 
-If the symmetric run shows ``p^C`` inside the empirical cloud while the
-asymmetric run does not, the gap is fully explained by the asymmetry of
-``p^C`` itself rather than by any failure of the dynamics to span the
-theoretical region.
+Outputs of :func:`run_comparison` (exported to ``results/figures/`` and
+``results/tables/``):
 
-Outputs:
-
-* ``fig_symmetric_pseudoequilibria_continuum_region.pdf`` -- price-space scatter.
-* ``fig_symmetric_pseudoequilibria_continuum_revenue.pdf`` -- revenue-space scatter.
-* ``table_symmetric_pseudoequilibria_continuum_summary`` -- empirical summary statistics.
+* ``fig_pseudoequilibria_continuum_{symexplore,asymexplore}_region.pdf`` -- price-space scatter.
+* ``fig_pseudoequilibria_continuum_{symexplore,asymexplore}_revenue.pdf`` -- surplus-capture scatter.
+* ``table_symmetric_pseudoequilibria_continuum_summary_{symexplore,asymexplore}`` -- empirical summary statistics.
 """
 
 from __future__ import annotations
 
 import _common as C  # type: ignore[import-not-found]
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# Reuse the asymmetric experiment's helpers verbatim -- the theoretical-region
-# computation is generic and only the demand object differs.
-from exp_asymmetric_pseudoequilibria_continuum import (  # type: ignore[import-not-found]
-    _build_warmups,
-    _plot_region,
-    _theoretical_region,
-)
-
-from src import market
-from src.artifact_export import export_figure, export_table
-from src.config import (
+from ob_learn import market
+from ob_learn.artifact_export import export_figure, export_table
+from ob_learn.config import (
     ExperimentConfig,
     ExplorationSchedule,
     InformedProjectionBox,
     SellerSpec,
 )
-from src.logging_utils import run_directory
-from src.simulator import run_simulation
+from ob_learn.logging_utils import run_directory
+from ob_learn.plotting import SQUARE_FIGSIZE, report_style, smart_legend, square_box
+from ob_learn.simulator import run_simulation
+
+# ---------------------------------------------------------------------------
+# Theoretical-region helpers.
+# ---------------------------------------------------------------------------
+
+
+def _admissible_r(r_grid: np.ndarray, *, ub_r1: float, ub_r2: float) -> np.ndarray:
+    """Boolean ``(R, R)`` mask of admissible ``(r_1, r_2)`` pairs.
+
+    Admissibility conditions are ``r_i < ub_i``, plus ``r_1 = r_2 = 0`` *or*
+    ``0 < r_1 r_2 <= 1`` (the Cauchy-Schwarz constraint). The upper bounds
+    ``ub_i = -beta_i / gamma_{i,j}`` are where the misspecified slope
+    ``beta + gamma r`` flips sign (greedy price ill-defined). ``r_i`` is the
+    unstandardized covariance-to-variance ratio and can exceed 1, so the grid
+    should extend up to ``max(ub_r1, ub_r2)``.
+    """
+    r1m, r2m = np.meshgrid(r_grid, r_grid, indexing="ij")
+    bounds = (r1m < ub_r1) & (r2m < ub_r2)
+    product = r1m * r2m
+    same_sign = (product > 0.0) & (product <= 1.0)
+    zero = (np.abs(r1m) < 1e-9) & (np.abs(r2m) < 1e-9)
+    return bounds & (same_sign | zero)
+
+
+def _theoretical_region(d, *, r_grid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Sweep admissible ``(r_1, r_2)`` and solve the 2x2 linear system.
+
+    Returns ``(prices, revenues)`` of shape ``(M, 2)`` containing the
+    pseudo-equilibrium price pairs and the corresponding per-period revenue
+    pairs. In addition to the interior sweep, the boundary ``r_1 r_2 = 1``
+    (where the joint-profit collusive price lives) is sampled densely.
+    """
+    alpha = d.alpha_arr
+    beta = d.beta_arr
+    G = d.gamma_arr
+    g12 = float(G[0, 1])
+    g21 = float(G[1, 0])
+    ub_r1 = -float(beta[0]) / g12  # > 0 since beta<0, gamma>0
+    ub_r2 = -float(beta[1]) / g21
+    mask = _admissible_r(r_grid, ub_r1=ub_r1, ub_r2=ub_r2)
+
+    def _try_pair(r1: float, r2: float) -> tuple[np.ndarray, np.ndarray] | None:
+        A = np.array(
+            [
+                [2.0 * beta[0] + g12 * r1, g12],
+                [g21, 2.0 * beta[1] + g21 * r2],
+            ],
+            dtype=np.float64,
+        )
+        b = -alpha
+        det = np.linalg.det(A)
+        if abs(det) < 1e-10:
+            return None
+        m = np.linalg.solve(A, b)
+        if (m < d.l).any() or (m > d.u).any():
+            return None
+        rev = market.per_period_revenue(d, m)
+        return m, rev
+
+    prices: list[np.ndarray] = []
+    revenues: list[np.ndarray] = []
+    for i, r1 in enumerate(r_grid):
+        for j, r2 in enumerate(r_grid):
+            if not mask[i, j]:
+                continue
+            out = _try_pair(float(r1), float(r2))
+            if out is None:
+                continue
+            m, rev = out
+            prices.append(m)
+            revenues.append(rev)
+
+    eps = 1e-3
+    r1_boundary = np.concatenate([
+        np.linspace(eps, ub_r1 - eps, 2000),
+        np.linspace(-ub_r1 + eps, -eps, 2000),
+    ])
+    for r1 in r1_boundary:
+        r2 = 1.0 / float(r1)
+        if r2 >= ub_r2 or r2 <= -ub_r2:
+            continue
+        if r1 * r2 <= 0.0:
+            continue
+        out = _try_pair(float(r1), float(r2))
+        if out is None:
+            continue
+        m, rev = out
+        prices.append(m)
+        revenues.append(rev)
+
+    return np.asarray(prices), np.asarray(revenues)
+
+
+def _build_warmups(d, *, n_configs: int, base_seed: int) -> list[list[list[float]]]:
+    """Generate a diverse set of warm-up price pairs spanning the price box."""
+    rng = np.random.default_rng(base_seed)
+    centers = [
+        (d.l + 0.2, d.l + 0.2),
+        (d.u - 0.2, d.u - 0.2),
+        (d.l + 0.2, d.u - 0.2),
+        (d.u - 0.2, d.l + 0.2),
+        (1.5, 1.5),
+        (2.0, 2.0),
+    ]
+    out: list[list[list[float]]] = []
+    for cx, cy in centers:
+        for _ in range(max(1, n_configs // len(centers))):
+            jitter = rng.uniform(-0.15, 0.15, size=(2, 2))
+            p1 = [float(np.clip(cx + jitter[0, 0], d.l + 0.05, d.u - 0.05)),
+                  float(np.clip(cy + jitter[0, 1], d.l + 0.05, d.u - 0.05))]
+            p2 = [float(np.clip(cx + jitter[1, 0], d.l + 0.05, d.u - 0.05)),
+                  float(np.clip(cy + jitter[1, 1], d.l + 0.05, d.u - 0.05))]
+            out.append([p1, p2])
+    return out
+
+
+def _plot_region(
+    *,
+    title_suffix: str,
+    theory: np.ndarray,  # (M, 2) theoretical points
+    empirical: np.ndarray,  # (K, 2) empirical points
+    benchmarks: dict[str, tuple[float, float]],
+    xlabel: str,
+    ylabel: str,
+    pad: float = 0.08,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+):
+    """Plot a 2D scatter: theoretical region (shaded) + empirical points + benchmarks.
+
+    If ``xlim`` / ``ylim`` are provided they are used verbatim (so sibling
+    panels share the same geometric view); otherwise the zoom is computed from
+    the empirical scatter + benchmarks with relative padding ``pad``. The
+    theoretical-region scatter is rasterized to keep the PDF lean, and explicit
+    ``subplots_adjust`` margins (with ``export_figure(tight_bbox=False)``)
+    guarantee identical page dimensions across calls.
+    """
+    if xlim is None or ylim is None:
+        bench_xy = np.array(list(benchmarks.values()))
+        xs = np.concatenate([empirical[:, 0], bench_xy[:, 0]])
+        ys = np.concatenate([empirical[:, 1], bench_xy[:, 1]])
+        x_lo, x_hi = float(xs.min()), float(xs.max())
+        y_lo, y_hi = float(ys.min()), float(ys.max())
+        x_pad = pad * (x_hi - x_lo + 1e-9)
+        y_pad = pad * (y_hi - y_lo + 1e-9)
+        auto_xlim = (x_lo - x_pad, x_hi + x_pad)
+        auto_ylim = (y_lo - y_pad, y_hi + y_pad)
+        if xlim is None:
+            xlim = auto_xlim
+        if ylim is None:
+            ylim = auto_ylim
+    xl, xh = xlim
+    yl, yh = ylim
+
+    bench_colors = {
+        "NE": "tab:red",
+        "C": "tab:green",
+        "Stackelberg": "tab:purple",
+    }
+
+    with report_style():
+        fig, ax = plt.subplots(figsize=SQUARE_FIGSIZE)
+        ax.scatter(
+            theory[:, 0], theory[:, 1],
+            s=10, color="lightsteelblue", alpha=0.55, edgecolor="none",
+            label="theoretical region", rasterized=True,
+        )
+        if "NE" in benchmarks and "C" in benchmarks:
+            ne = benchmarks["NE"]
+            cc = benchmarks["C"]
+            ax.plot([ne[0], cc[0]], [ne[1], cc[1]],
+                    color="tab:gray", linestyle="--", lw=1.2,
+                    label=f"$p^{{NE}}$--$p^{{C}}$ {title_suffix}")
+        ax.scatter(
+            empirical[:, 0], empirical[:, 1],
+            s=22, color="tab:blue", alpha=0.75, edgecolor="white", linewidth=0.4,
+            label="empirical",
+        )
+        for name, pt in benchmarks.items():
+            ax.scatter([pt[0]], [pt[1]], s=160,
+                       color=bench_colors.get(name, "black"),
+                       marker="X", edgecolor="white", linewidth=0.6, zorder=10,
+                       label=(fr"$p^{{{name}}}$" if name in ("NE", "C") else "Stackelberg"))
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_xlim(xl, xh)
+        ax.set_ylim(yl, yh)
+        smart_legend(ax, fontsize=11)
+        square_box(ax)
+        fig.subplots_adjust(left=0.17, right=0.97, bottom=0.11, top=0.97)
+    return fig
 
 
 def main(
@@ -59,24 +242,45 @@ def main(
     base_seed: int = 833,
     c: float = 0.3,
     eta: float = 0.85,
+    eta2: float | None = None,
+    c2: float | None = None,
+    name_tag: str | None = None,
     quick: bool = False,
     xlim_price: tuple[float, float] | None = None,
     ylim_price: tuple[float, float] | None = None,
     xlim_revenue: tuple[float, float] | None = None,
     ylim_revenue: tuple[float, float] | None = None,
 ) -> dict:
-    """Run the symmetric continuum of pseudo-equilibria experiment for one ``eta``.
+    """Run the pseudo-equilibria-continuum experiment on the *symmetric* duopoly.
+
+    Exploration is controlled per seller. Seller 0 always uses
+    ``nu_n^2 = c (n+1)^{-eta}``; seller 1 uses ``c2 (n+1)^{-eta2}`` (defaulting
+    to the same schedule as seller 0, i.e.\\ the *symmetric-exploration* case).
+    Setting ``eta2 != eta`` (or ``c2 != c``) yields the *asymmetric-exploration*
+    case on the same symmetric demand: one seller eventually accumulates more
+    price variance and becomes variance-dominant.
 
     Optional ``xlim_*`` / ``ylim_*`` arguments override the per-call
-    auto-zoom in the plot rendering. ``run_shared_axis_pair`` (below) uses
-    them to enforce *shared* axes across the two schedule variants so that
-    the same theoretical-region geometry appears in both panels.
-
-    Returns a dict with the empirical price- and revenue-clouds, so a
-    caller can compute a shared axis window across multiple runs.
+    auto-zoom in the plot rendering, so a caller can enforce *shared* axes
+    across variants. ``name_tag`` overrides the output-file suffix (used by
+    :func:`run_comparison`). Returns a dict with the empirical price- and
+    revenue-clouds so a caller can compute a shared axis window across runs.
     """
     horizon, n_seeds = C.quick_overrides(quick, default_T=horizon, default_S=n_seeds)
     d = C.baseline_demand()  # symmetric: alpha=2.5, beta=-1, gamma=0.4
+    c2 = c if c2 is None else c2
+    eta2 = eta if eta2 is None else eta2
+    asymmetric = (eta2 != eta) or (c2 != c)
+    seller_scheds = [
+        ExplorationSchedule(kind="polynomial", c=c, eta=eta),
+        ExplorationSchedule(kind="polynomial", c=c2, eta=eta2),
+    ]
+
+    def _make_sellers():
+        return [
+            SellerSpec(kind="oblivious", exploration=seller_scheds[i])
+            for i in range(d.N)
+        ]
     box_ob = C.tight_oblivious_box(d, expand=0.6)
     p_NE = market.nash_prices(d)
     p_C = market.collusive_prices(d)
@@ -86,27 +290,29 @@ def main(
     g12 = float(d.gamma_arr[0, 1])
     g21 = float(d.gamma_arr[1, 0])
     r_hi = max(-float(d.beta_arr[0]) / g12, -float(d.beta_arr[1]) / g21)
-    # Denser interior grid (1201) than the historical 401, so the rendered
-    # theoretical-region scatter looks uniformly filled even when a panel
-    # is zoomed in tightly near the Nash equilibrium. The scatter is
-    # rasterized inside ``_plot_region`` to keep the PDF file size small.
+    # The theoretical-region scatter is rasterized inside ``_plot_region`` to
+    # keep the PDF file size small.
     r_grid = np.linspace(-r_hi, r_hi, 1201)
     theory_prices, theory_revenues = _theoretical_region(d, r_grid=r_grid)
 
-    # Tag outputs with the exploration exponent so multiple schedule
-    # choices coexist in ``results/figures/``. The canonical run keeps the
-    # un-tagged names so default outputs stay stable.
-    if eta == 0.85 and c == 0.3:
+    # Tag outputs so multiple schedule choices coexist in ``results/figures/``.
+    # An explicit ``name_tag`` (from ``run_comparison``) wins; otherwise the
+    # canonical symmetric run keeps the un-tagged names so default outputs stay
+    # stable, and other schedules get an eta-based suffix.
+    if name_tag is not None:
+        eta_tag = name_tag
+    elif asymmetric:
+        eta_tag = f"_asym_eta_{eta:g}_{eta2:g}".replace(".", "p")
+    elif eta == 0.85 and c == 0.3:
         eta_tag = ""
     else:
         eta_tag = f"_eta_{eta:g}".replace(".", "p")
     exp_name = f"exp_symmetric_pseudoequilibria_continuum{eta_tag}"
 
-    rep_sched = ExplorationSchedule(kind="polynomial", c=c, eta=eta)
     cfg = ExperimentConfig(
         name=exp_name,
         market=d,
-        sellers=[SellerSpec(kind="oblivious", exploration=rep_sched) for _ in range(d.N)],
+        sellers=_make_sellers(),
         oblivious_projection=box_ob,
         informed_projection=InformedProjectionBox.from_demand(d),
         horizon=horizon,
@@ -119,6 +325,10 @@ def main(
         run.logger.info(
             "symmetric duopoly: alpha=%s beta=%s gamma=%s",
             d.alpha, d.beta, d.gamma,
+        )
+        run.logger.info(
+            "exploration: seller0 nu^2=%g(n+1)^-%g, seller1 nu^2=%g(n+1)^-%g (asymmetric=%s)",
+            c, eta, c2, eta2, asymmetric,
         )
         run.logger.info("p_NE=%s p_C=%s", p_NE.tolist(), p_C.tolist())
         run.logger.info(
@@ -139,7 +349,7 @@ def main(
             sub_cfg = ExperimentConfig(
                 name=f"warm_{k:03d}",
                 market=d,
-                sellers=[SellerSpec(kind="oblivious", exploration=rep_sched) for _ in range(d.N)],
+                sellers=_make_sellers(),
                 oblivious_projection=box_ob,
                 informed_projection=InformedProjectionBox.from_demand(d),
                 horizon=horizon,
@@ -235,11 +445,11 @@ def main(
             summary_df, f"table_symmetric_pseudoequilibria_continuum_summary{eta_tag}",
             caption=(
                 "Long-run prices and revenues in the *symmetric* duopoly "
-                "($\\alpha=2.5$, $\\beta=-1$, $\\gamma=0.4$) under "
-                f"$\\nu_n^2 = {c:g} (n+1)^{{-{eta:g}}}$, started from the same spread of "
-                "warm-up price pairs used in the asymmetric experiment. "
-                "The collusive marker lies on the ``p_1 = p_2`` diagonal and is "
-                "approximately surrounded by the empirical cloud."
+                "($\\alpha=2.5$, $\\beta=-1$, $\\gamma=0.4$) under per-seller "
+                f"exploration $\\nu_{{n,1}}^2 = {c:g}(n+1)^{{-{eta:g}}}$ and "
+                f"$\\nu_{{n,2}}^2 = {c2:g}(n+1)^{{-{eta2:g}}}$ "
+                f"({'asymmetric' if asymmetric else 'symmetric'} exploration), "
+                "started from a diverse spread of warm-up price pairs."
             ),
             floatfmt=".4g",
         )
@@ -256,15 +466,7 @@ def main(
             ylabel=r"$\bar p_2$",
             xlim=xlim_price, ylim=ylim_price,
         )
-        run.save_figure("symmetric_pseudoequilibria_region", fig_price, close=False)
-        # tight_bbox=False + the explicit subplots_adjust in _plot_region
-        # guarantees identical page dimensions across the two schedules,
-        # so the LaTeX subfigures render at the same height; dpi=300 is
-        # the raster resolution of the rasterized theoretical-region scatter.
-        export_figure(
-            fig_price, f"fig_symmetric_pseudoequilibria_continuum_region{eta_tag}",
-            strip_title=True, tight_bbox=False, dpi=300,
-        )
+        run.save_figure("symmetric_pseudoequilibria_region", fig_price)
 
         fig_rev = _plot_region(
             title_suffix="segment",
@@ -278,11 +480,7 @@ def main(
             ylabel=r"$\Pi_2(\bar p)$",
             xlim=xlim_revenue, ylim=ylim_revenue,
         )
-        run.save_figure("symmetric_pseudoequilibria_revenue", fig_rev, close=False)
-        export_figure(
-            fig_rev, f"fig_symmetric_pseudoequilibria_continuum_revenue{eta_tag}",
-            strip_title=True, tight_bbox=False, dpi=300,
-        )
+        run.save_figure("symmetric_pseudoequilibria_revenue", fig_rev)
 
         run.logger.info(
             "exp_symmetric_pseudoequilibria_continuum: %d empirical points, mean off-ridge distance = %.4f, "
@@ -295,13 +493,22 @@ def main(
 
     return {
         "eta": eta,
+        "eta2": eta2,
+        "asymmetric": asymmetric,
         "eta_tag": eta_tag,
         "emp_prices": emp_prices,
         "emp_revenues": emp_revenues,
+        "theory_prices": theory_prices,
+        "theory_revenues": theory_revenues,
         "p_NE": p_NE,
         "p_C": p_C,
         "pi_NE": pi_NE,
         "pi_C": pi_C,
+        "frac_below_NE_any": float(below_ne_any),
+        "frac_below_NE_both": float(below_ne_both),
+        "frac_both_above_NE": float(
+            ((emp_revenues[:, 0] >= pi_NE[0]) & (emp_revenues[:, 1] >= pi_NE[1])).mean()
+        ),
     }
 
 
@@ -323,52 +530,133 @@ def _expand_box(
     return (x_lo - x_pad, x_hi + x_pad), (y_lo - y_pad, y_hi + y_pad)
 
 
-def run_shared_axis_pair(
+def _rerender_from_cache(
+    result: dict,
+    *,
+    tag: str,
+    xlim_price: tuple[float, float],
+    ylim_price: tuple[float, float],
+    xlim_revenue: tuple[float, float],
+    ylim_revenue: tuple[float, float],
+) -> None:
+    """Re-plot the price/revenue scatters from cached arrays (no re-simulation)."""
+    p_NE, p_C = result["p_NE"], result["p_C"]
+    pi_NE, pi_C = result["pi_NE"], result["pi_C"]
+    fig_price = _plot_region(
+        title_suffix="segment",
+        theory=result["theory_prices"],
+        empirical=result["emp_prices"],
+        benchmarks={"NE": (float(p_NE[0]), float(p_NE[1])),
+                    "C":  (float(p_C[0]),  float(p_C[1]))},
+        xlabel=r"$\bar p_1$", ylabel=r"$\bar p_2$",
+        xlim=xlim_price, ylim=ylim_price,
+    )
+    export_figure(fig_price, f"fig_pseudoequilibria_continuum_{tag}_region",
+                  strip_title=True, tight_bbox=False, dpi=300)
+    plt.close(fig_price)
+    # Report revenue as the (unit-free) surplus-capture ratio S_i, consistent
+    # with the paper's performance metric: S_i = (Pi_i - Pi_i^NE)/(Pi_i^C - Pi_i^NE),
+    # so Nash -> 0 and collusive -> 1. This is an affine rescaling of the raw
+    # per-period revenue, so the cloud geometry (and the above/below-Nash
+    # fractions) is unchanged; only the axes are normalized.
+    pi_NE = np.asarray(pi_NE, dtype=float)
+    pi_C = np.asarray(pi_C, dtype=float)
+    denom = pi_C - pi_NE
+
+    def _to_surplus(arr: np.ndarray) -> np.ndarray:
+        return (np.asarray(arr, dtype=float) - pi_NE) / denom
+
+    s_xlim = ((xlim_revenue[0] - pi_NE[0]) / denom[0],
+              (xlim_revenue[1] - pi_NE[0]) / denom[0])
+    s_ylim = ((ylim_revenue[0] - pi_NE[1]) / denom[1],
+              (ylim_revenue[1] - pi_NE[1]) / denom[1])
+    fig_rev = _plot_region(
+        title_suffix="segment",
+        theory=_to_surplus(result["theory_revenues"]),
+        empirical=_to_surplus(result["emp_revenues"]),
+        benchmarks={"NE": (0.0, 0.0), "C": (1.0, 1.0)},
+        xlabel=r"$S_1$", ylabel=r"$S_2$",
+        xlim=s_xlim, ylim=s_ylim,
+    )
+    export_figure(fig_rev, f"fig_pseudoequilibria_continuum_{tag}_revenue",
+                  strip_title=True, tight_bbox=False, dpi=300)
+    plt.close(fig_rev)
+
+
+def run_comparison(
     *,
     horizon: int = 80_000,
     n_seeds: int = 30,
     base_seed: int = 833,
     c: float = 0.3,
-    etas: tuple[float, ...] = (0.85, 0.5),
+    eta_sym: float = 0.85,
+    eta_dominant: float = 0.2,
+    eta_dominated: float = 0.9,
     quick: bool = False,
 ) -> None:
-    """Two-pass entry point that produces the *publication-ready* pseudo-equilibria figures.
+    """Produce the paper's pseudo-equilibria comparison figure: symmetric vs asymmetric exploration.
 
-    The single-eta ``main()`` only knows about one schedule, so it cannot
-    enforce shared axis windows. This wrapper runs ``main`` for each eta
-    in ``etas`` to harvest the empirical clouds, computes a single shared
-    (xlim, ylim) per panel type (price or revenue), and re-renders the
-    four comparison PDFs so that both schedules show the *same* theoretical-region
-    geometry -- which they should, since the demand parameters are identical.
+    Both panels use the *same symmetric demand*; they differ only in the
+    per-seller exploration schedule (``nu_n^2 = c(n+1)^{-eta}``, so a smaller
+    ``eta`` decays more slowly and accumulates more price variance):
+
+    * ``symexplore``: both sellers use exponent ``eta_sym``,
+    * ``asymexplore``: seller 0 uses the slower-decaying ``eta_dominant`` and
+      seller 1 the faster-decaying ``eta_dominated``, so seller 0 accumulates
+      more price variance and becomes variance-dominant.
+
+    Renders four PDFs (``fig_pseudoequilibria_continuum_{symexplore,asymexplore}_{region,revenue}``)
+    on *shared* axes so the two regimes are directly comparable.
     """
-    results = [
-        main(
-            horizon=horizon, n_seeds=n_seeds, base_seed=base_seed,
-            c=c, eta=eta, quick=quick,
-        )
-        for eta in etas
-    ]
+    sym = main(
+        horizon=horizon, n_seeds=n_seeds, base_seed=base_seed,
+        c=c, eta=eta_sym, eta2=eta_sym, name_tag="_symexplore", quick=quick,
+    )
+    asym = main(
+        horizon=horizon, n_seeds=n_seeds, base_seed=base_seed,
+        c=c, eta=eta_dominant, eta2=eta_dominated, name_tag="_asymexplore", quick=quick,
+    )
     price_xlim, price_ylim = _expand_box(
-        [r["emp_prices"] for r in results],
-        [tuple(results[0]["p_NE"]), tuple(results[0]["p_C"])],
+        [sym["emp_prices"], asym["emp_prices"]],
+        [tuple(sym["p_NE"]), tuple(sym["p_C"])],
     )
     rev_xlim, rev_ylim = _expand_box(
-        [r["emp_revenues"] for r in results],
-        [tuple(results[0]["pi_NE"]), tuple(results[0]["pi_C"])],
+        [sym["emp_revenues"], asym["emp_revenues"]],
+        [tuple(sym["pi_NE"]), tuple(sym["pi_C"])],
     )
-    print(f"shared price axes:   x={price_xlim}, y={price_ylim}")
-    print(f"shared revenue axes: x={rev_xlim}, y={rev_ylim}")
-
-    # Second pass: re-render only (re-uses the simulation results we just
-    # produced, but the plot-render itself is fast).
-    for eta in etas:
-        main(
-            horizon=horizon, n_seeds=n_seeds, base_seed=base_seed,
-            c=c, eta=eta, quick=quick,
+    for tag, res in (("symexplore", sym), ("asymexplore", asym)):
+        _rerender_from_cache(
+            res, tag=tag,
             xlim_price=price_xlim, ylim_price=price_ylim,
             xlim_revenue=rev_xlim, ylim_revenue=rev_ylim,
+        )
+    print("=== comparison summary (fraction of seeds) ===")
+    for tag, res in (("symmetric ", sym), ("asymmetric", asym)):
+        print(
+            f"  {tag} exploration: both-above-NE={res['frac_both_above_NE']:.3f}  "
+            f"any-below-NE={res['frac_below_NE_any']:.3f}  "
+            f"both-below-NE={res['frac_below_NE_both']:.3f}"
         )
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--comparison", action="store_true",
+                        help="run the symmetric-vs-asymmetric exploration comparison")
+    parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--horizon", type=int, default=80_000)
+    parser.add_argument("--n-seeds", type=int, default=30)
+    parser.add_argument("--eta-dominant", type=float, default=0.2)
+    parser.add_argument("--eta-dominated", type=float, default=0.9)
+    args = parser.parse_args()
+
+    if args.comparison:
+        run_comparison(
+            horizon=args.horizon, n_seeds=args.n_seeds,
+            eta_dominant=args.eta_dominant, eta_dominated=args.eta_dominated,
+            quick=args.quick,
+        )
+    else:
+        main(quick=args.quick, horizon=args.horizon, n_seeds=args.n_seeds)

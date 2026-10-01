@@ -1,14 +1,14 @@
-# Oblivious Learning and Algorithmic Collusion
+# Oblivious Learning and Collusive Pricing
 
-This repository contains code for the paper **"Should Demand Models Incorporate Competitor Prices? Oblivious Learning and Algorithmic Collusion"** ([arXiv](https://arxiv.org/abs/2606.05363)).
+This repository contains the code for **"Oblivious Learning and
+Collusive Pricing"** ([arXiv](https://arxiv.org/abs/2606.05363)).
 
-The codebase combines a reusable simulation library in [`src/`](src/) with a
+The codebase combines a reusable simulation library in [`ob_learn/`](ob_learn/) with a
 suite of experiment scripts in [`experiments/`](experiments/). Runs produce
 timestamped artifacts under [`results/`](results/), including logs, compressed
-trajectories, summary tables, and generated figures.
-
-Licensed under the [MIT License](LICENSE). Python 3.13+, all dependencies
-pinned via [`uv`](https://github.com/astral-sh/uv).
+trajectories, summary tables, and generated figures. The figures and tables
+shipped with the paper live in [`results/figures/`](results/figures/) and
+[`results/tables/`](results/tables/).
 
 ## Quick start
 
@@ -22,92 +22,70 @@ uv run pytest
 # List discoverable experiments.
 uv run ob-learn list
 
-# Run a single experiment.
-uv run ob-learn run mixed-forecast-rules --quick
-uv run ob-learn run mixed-forecast-rules
-
-# Run the full benchmark suite.
-uv run ob-learn run-all
+# Run a single experiment (append --quick for a fast smoke run).
+uv run ob-learn run learning-rule-robustness --quick
+uv run ob-learn run variance-dominance
 ```
 
-Each invocation writes a self-contained directory to `results/` with the
-config snapshot, per-seed trajectories, summary CSVs, and PDFs. After running
-a meta-game block (`ob-ob-revenue`, `ob-in-revenue`, `in-in-revenue-decay`,
-`variance-dominance`), compile the cross-experiment
-revenue summary with:
+Each invocation writes a self-contained directory to `results/` with the config
+snapshot, per-seed trajectories, summary CSVs, and figures, and also exports the
+named figures/tables to `results/figures/` and `results/tables/`.
+
+## Reproducing the paper's figures and tables
+
+Every shipped figure is produced by a single experiment; running it writes the
+figure to `results/figures/` under the exact filename used in the manuscript.
+
+**Cached runs and fast re-plotting.** The regret sweeps (global-convergence,
+all-informed, mixed, robustness) cache their seed-reduced, figure-ready curves to
+`results/figdata/<experiment>.npz` (a few MB total, committed to the repo). This
+lets you redraw a figure without re-simulating:
 
 ```bash
-uv run python experiments/build_meta_revenue_summary.py
+uv run ob-learn run mixed-small-gain --replot     # redraw from cached figdata
+uv run ob-learn run mixed-small-gain --overwrite  # force a fresh simulation
+uv run ob-learn run mixed-small-gain --workers 4  # cell-level parallelism (default: min(4, #cores))
 ```
+
+Cells of each parameter sweep are independent and run in parallel across worker
+processes; `--replot` skips simulation entirely and rebuilds the figure from the
+cached curves.
+
+| Manuscript figure (filename) | Command |
+| --- | --- |
+| Intro sample paths (`fig1_near_NE`, `fig1_intermediate`, `fig1_near_C`) | `uv run ob-learn run intro-sample-paths` |
+| Pseudo-equilibrium region + surplus capture (`fig_pseudoequilibria_continuum_{sym,asym}explore_{region,revenue}`) | `uv run ob-learn run pseudoequilibria-continuum` |
+| Variance-dominance regret (`fig_variance_dominance_regret_N2/N3`) | `uv run ob-learn run variance-dominance` |
+| Global-convergence stress tests (`fig_3h_asymmetric_regret_paths`, `fig_3b_dominance_regret_paths`) | `uv run ob-learn run asymmetric-multiseller` and `uv run ob-learn run dominance-margin` |
+| All-informed learning regret (`fig_EA_symm_regret_paths`, `fig_EA_asym_regret_paths`) | `uv run ob-learn run all-informed-stress` |
+| Mixed-market learning regret (`fig_M1_smallgain_regret_paths`, `fig_M2_multiseller_regret_paths`, `fig_M1b_iv_holds_regret_paths`) | `uv run ob-learn run mixed-small-gain`, `mixed-multiseller`, `mixed-small-gain-iv-holds` |
+| Learning-rule robustness appendix (`fig_robustness_{ridge,eps}_{symmetric,asymmetric}`, `fig_robustness_regret`) | `uv run ob-learn run learning-rule-robustness` |
+| Numerical revenue comparison (`table_ob_ob_revenue`, `table_ob_in_obin_revenue`, `table_in_in_decay_revenue`, `table_surplus_capture`) | `uv run ob-learn run ob-ob-revenue`, `ob-in-revenue`, `in-in-revenue-decay`, then `uv run python experiments/build_meta_revenue_summary.py` |
 
 ## Layout
 
 ```
-.
+ob-learn/
 ├── README.md
-├── LICENSE
 ├── pyproject.toml           # dependencies + entry point
 ├── uv.lock                  # pinned resolution
-├── src/                     # library
-│   └── tests/               # pytest suite (run with `uv run pytest`)
+├── LICENSE
+├── ob_learn/                # library
+├── tests/                   # pytest suite (run with `uv run pytest`)
 ├── experiments/             # one script per experiment family
 └── results/
-    ├── figures/             # exported figure files
+    ├── figures/             # exported figure files (the shipped paper figures)
     ├── tables/              # exported summary tables
-    └── <YYYYMMDD-HHMMSS>_<exp>_<hash>/   # per-run artifacts
+    ├── figdata/             # cached figure-ready curves for `--replot`
+    └── <YYYYMMDD-HHMMSS>_<exp>_<hash>/   # per-run artifacts (generated on each run)
 ```
 
-## Library (`src/`)
-
-| Module             | Role |
-| ------------------ | ---- |
-| `config.py`        | Pydantic-validated `DemandParams`, `ProjectionBox`, `ExplorationSchedule`, `SellerSpec`, `ExperimentConfig`. Enforces dominance and projection-box conditions. |
-| `market.py`        | Closed-form Nash, collusive, and Stackelberg prices; pseudo-true oblivious estimates; threshold constants (`gamma_bar`, `L_phi_oblivious`, `C_x_oblivious`). |
-| `exploration.py`   | `nu_at(schedule, n)` and `sample(...)`; constant, polynomial $\nu_n^2 = c n^{-\eta}$, $\sqrt n$, and Gaussian-clip variants. |
-| `estimators.py`    | Vectorised iterated OLS for oblivious (2-D) and informed ($N+1$-D) regressions; projection onto the box; greedy revenue-maximising price. |
-| `sellers.py`       | Plug-in forecast rules: `mean_price`, `perfect_prediction`, `greedy_component`, `lag1`, `oracle_nash`. |
-| `simulator.py`     | Vectorised-over-seeds main loop. Warm-up that guarantees full-rank designs; deferred-forecast ordering for Stackelberg-style informed sellers; structured per-step logging. |
-| `analysis.py`      | Log-log slope fits, predicted-rate utilities, regression-ratio and surplus-capture estimators. |
-| `benchmarks.py`    | Cumulative revenue, Nash/collusive/Stackelberg references, cross-seed bands. |
-| `plotting.py`      | `plot_mse_loglog`, `plot_sample_paths`, `plot_threshold_heatmap`, `plot_excursion_overlay`, etc. Each saves PDF + PNG and closes figures to bound memory across long sweeps. |
-| `ode.py`           | Discrete-time and continuous-time $(m, Q)$ dynamics used by the excursion experiment. |
-| `artifact_export.py` | Shared utilities that export figures/tables to `results/figures/` and `results/tables/`. |
-| `logging_utils.py` | `run_directory(...)` context manager: creates timestamped output dir, dumps configs/env, opens a `RichHandler` logger, writes `done.flag` last. |
-| `cli.py`           | The `ob-learn` entry point (`list`, `run`, `run-all`). |
-
-## Experiments
-
-Run `uv run ob-learn list` to see the available configurations.
-
-| Configuration | Focus |
-| ------------ | ----- |
-| `mixed-forecast-rules` | Mixed-market forecast-rule comparison. |
-| `ob-ob-revenue` | Oblivious-oblivious revenue regimes. |
-| `ob-in-revenue` | Oblivious-informed revenue regimes. |
-| `in-in-revenue-decay` | Informed-informed decaying exploration. |
-| `variance-dominance` | Dominance under asymmetric exploration rates. |
-| `variance-dominance-relocated-box` | Dominance robustness under a relocated projection box. |
-| `excursion-dynamics` | ODE and discrete excursion dynamics. |
-| `threshold-curve` | Regime transition along exploration variance grid. |
-| `dominance-margin` | Dominance-margin stress sweep. |
-| `asymmetric-pseudoequilibria-continuum` | Asymmetric continuum of pseudo-equilibria analysis. |
-| `symmetric-pseudoequilibria-continuum` | Symmetric continuum of pseudo-equilibria analysis. |
-| `gaussian-dither-robustness` | Robustness to Gaussian-clip dithering. |
-| `asymmetric-multiseller` | Asymmetric multi-seller stress tests. |
-| `all-informed-stress` | All-informed market stress tests. |
-| `mixed-small-gain` | Mixed-market small-gain stress test. |
-| `mixed-small-gain-iv-holds` | Mixed-market small-gain variant where the denominator condition holds. |
-| `mixed-multiseller` | Mixed-market multi-seller stress tests. |
-| `mixed-revenue-ordering` | Revenue ordering in mixed strategy populations. |
-
 ## Per-run output structure
-
-Every experiment writes a directory under `results/`:
 
 ```
 results/<YYYYMMDD-HHMMSS>_<experiment>_<short_hash>/
 ├── config.yaml + config.json    # full ExperimentConfig snapshot
-├── env.txt + git_info.txt       # python/numpy versions, commit + diff
+├── env.txt + git_info.txt       # python/numpy versions, commit + working-tree status
 ├── run.log                      # human-readable, timestamped
 ├── events.jsonl                 # phase transitions, regime predictions, fit slopes
 ├── trajectories/*.npz           # per-seed prices, demands, estimates (compressed)
@@ -116,57 +94,30 @@ results/<YYYYMMDD-HHMMSS>_<experiment>_<short_hash>/
 └── done.flag                    # written last; aborted runs are detectable
 ```
 
-Named figures and summary tables are additionally exported to
-`results/figures/` / `results/tables/` via
-`artifact_export.export_figure(...)` and `artifact_export.export_table(...)`.
-
 ## CLI options
 
 ```
 uv run ob-learn run <key>   [--horizon T] [--seeds S] [--base-seed N] [--quick]
+                                 [--replot] [--overwrite] [--workers W]
 uv run ob-learn run-all     [--horizon T] [--seeds S] [--base-seed N] [--quick]
                                  [--only KEY ...] [--skip KEY ...] [--continue-on-error]
 ```
 
-* `--quick` shrinks $T$ and $S$ to a smoke-test size (per-script tuned).
-* Set `OB_LEARN_LOG_LEVEL=DEBUG` for verbose console logs without
-  affecting the file logs.
-* Set `TQDM_DISABLE=1` to silence progress bars even in interactive shells.
+* `--quick` shrinks $T$ and $S$ to a smoke-test size.
+* Set `TQDM_DISABLE=1` to silence progress bars in non-interactive shells.
 
-## Dependencies
-
-Core: `numpy`, `scipy`, `pandas`, `matplotlib`, `pydantic`, `pyyaml`, `tqdm`,
-`rich`. Dev: `pytest`, `pytest-cov`, `ruff`, `mypy`. All are pinned in
-`pyproject.toml` / `uv.lock` and installed via `uv sync`. Python 3.13 is
-required.
-
-## Tests
-
-```bash
-uv run pytest                # ~5s
-uv run ruff check .          # lint
-uv run mypy src/             # static types
-```
-
-The test suite covers Nash / collusive / Stackelberg closed forms, OLS
-recovery on synthetic data, simulator invariants (price always in $[l, u]$,
-full-rank designs after warm-up), and revenue identities at the Nash and
-collusive benchmarks.
 
 ## Citation
 
 ```bibtex
-@misc{wu2026demandmodelsincorporatecompetitor,
-      title={Should Demand Models Incorporate Competitor Prices? Oblivious Learning and Algorithmic Collusion}, 
-      author={Yuhang Wu and Assaf Zeevi},
-      year={2026},
-      eprint={2606.05363},
-      archivePrefix={arXiv},
-      primaryClass={cs.GT},
-      url={https://arxiv.org/abs/2606.05363}, 
+@article{wu2026oblivious,
+  title   = {Oblivious Learning and Collusive Pricing},
+  author  = {Wu, Yuhang and Zeevi, Assaf},
+  journal = {arXiv preprint arXiv:2606.05363},
+  year    = {2026}
 }
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+This project is licensed under the MIT License; see [`LICENSE`](LICENSE).

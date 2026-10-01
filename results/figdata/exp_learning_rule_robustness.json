@@ -1,0 +1,178 @@
+{
+  "exp_id": "exp_learning_rule_robustness",
+  "n_cells": 22,
+  "params": [
+    {
+      "kind": "cont",
+      "family": "ridge",
+      "regime": "symmetric",
+      "n_points": 576,
+      "price_std": 0.1726624258212972
+    },
+    {
+      "kind": "cont",
+      "family": "ridge",
+      "regime": "asymmetric",
+      "n_points": 576,
+      "price_std": 0.04635299702023865
+    },
+    {
+      "kind": "cont",
+      "family": "eps",
+      "regime": "symmetric",
+      "n_points": 576,
+      "price_std": 0.20587111272242742
+    },
+    {
+      "kind": "cont",
+      "family": "eps",
+      "regime": "asymmetric",
+      "n_points": 576,
+      "price_std": 0.0399406592443062
+    },
+    {
+      "kind": "reg",
+      "panel": "ob",
+      "label": "$\\varepsilon$-greedy ($\\varepsilon=0.05$)",
+      "family": "eps",
+      "regret_slope_tail": 0.30606315355187513,
+      "pp_slope_tail": -1.0227841765961756
+    },
+    {
+      "kind": "reg",
+      "panel": "ob",
+      "label": "$\\varepsilon$-greedy ($\\varepsilon=0.1$)",
+      "family": "eps",
+      "regret_slope_tail": 0.15560606285127662,
+      "pp_slope_tail": -1.0360653000599027
+    },
+    {
+      "kind": "reg",
+      "panel": "ob",
+      "label": "$\\varepsilon$-greedy ($\\varepsilon=0.2$)",
+      "family": "eps",
+      "regret_slope_tail": 0.124958723977299,
+      "pp_slope_tail": -0.8321733667288964
+    },
+    {
+      "kind": "reg",
+      "panel": "ob",
+      "label": "Ridge ($\\lambda_0=0.25$)",
+      "family": "ridge",
+      "regret_slope_tail": 0.06410924845841001,
+      "pp_slope_tail": -1.151230335365346
+    },
+    {
+      "kind": "reg",
+      "panel": "ob",
+      "label": "Ridge ($\\lambda_0=0.5$)",
+      "family": "ridge",
+      "regret_slope_tail": 0.05090819553564675,
+      "pp_slope_tail": -1.1481688822180949
+    },
+    {
+      "kind": "reg",
+      "panel": "ob",
+      "label": "Ridge ($\\lambda_0=1$)",
+      "family": "ridge",
+      "regret_slope_tail": 0.04264646338363719,
+      "pp_slope_tail": -1.192590207185479
+    },
+    {
+      "kind": "reg",
+      "panel": "mixed",
+      "label": "Ridge ($\\lambda_0=0.25$)",
+      "family": "ridge",
+      "regret_slope_tail": 0.4895011672026398,
+      "pp_slope_tail": -0.4309248276272175
+    },
+    {
+      "kind": "reg",
+      "panel": "mixed",
+      "label": "Ridge ($\\lambda_0=0.5$)",
+      "family": "ridge",
+      "regret_slope_tail": 0.4275815267752534,
+      "pp_slope_tail": -0.3594386763742942
+    },
+    {
+      "kind": "reg",
+      "panel": "mixed",
+      "label": "Ridge ($\\lambda_0=1$)",
+      "family": "ridge",
+      "regret_slope_tail": 0.395162065870871,
+      "pp_slope_tail": -0.23715388582687277
+    },
+    {
+      "kind": "reg",
+      "panel": "mixed",
+      "label": "$\\varepsilon$-greedy ($\\varepsilon_{\\mathrm{ob}}=0.05$)",
+      "family": "eps",
+      "regret_slope_tail": 0.38861961447311777,
+      "pp_slope_tail": -0.45580988370263836
+    },
+    {
+      "kind": "reg",
+      "panel": "mixed",
+      "label": "$\\varepsilon$-greedy ($\\varepsilon_{\\mathrm{ob}}=0.1$)",
+      "family": "eps",
+      "regret_slope_tail": 0.48736297680230245,
+      "pp_slope_tail": -0.32395218041945056
+    },
+    {
+      "kind": "reg",
+      "panel": "mixed",
+      "label": "$\\varepsilon$-greedy ($\\varepsilon_{\\mathrm{ob}}=0.2$)",
+      "family": "eps",
+      "regret_slope_tail": 0.5203927188442042,
+      "pp_slope_tail": -0.2623670707246547
+    },
+    {
+      "kind": "reg",
+      "panel": "informed",
+      "label": "Ridge ($\\lambda_0=0.25$)",
+      "family": "ridge",
+      "regret_slope_tail": 0.6237016081160015,
+      "pp_slope_tail": -0.5229258393094564
+    },
+    {
+      "kind": "reg",
+      "panel": "informed",
+      "label": "Ridge ($\\lambda_0=0.5$)",
+      "family": "ridge",
+      "regret_slope_tail": 0.6113864939642516,
+      "pp_slope_tail": -0.49655547218790236
+    },
+    {
+      "kind": "reg",
+      "panel": "informed",
+      "label": "Ridge ($\\lambda_0=1$)",
+      "family": "ridge",
+      "regret_slope_tail": 0.5666599403899683,
+      "pp_slope_tail": -0.3971522574125765
+    },
+    {
+      "kind": "reg",
+      "panel": "informed",
+      "label": "$\\varepsilon$-greedy ($c=0.4,\\eta=0.5$)",
+      "family": "eps",
+      "regret_slope_tail": 0.5617750696868942,
+      "pp_slope_tail": -0.27374552961011933
+    },
+    {
+      "kind": "reg",
+      "panel": "informed",
+      "label": "$\\varepsilon$-greedy ($c=0.3,\\eta=0.6$)",
+      "family": "eps",
+      "regret_slope_tail": 0.6381969719012913,
+      "pp_slope_tail": -0.2811678052897307
+    },
+    {
+      "kind": "reg",
+      "panel": "informed",
+      "label": "$\\varepsilon$-greedy ($c=0.2,\\eta=0.7$)",
+      "family": "eps",
+      "regret_slope_tail": 0.6387260952028938,
+      "pp_slope_tail": -0.7404073486311856
+    }
+  ]
+}
